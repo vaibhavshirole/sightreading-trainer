@@ -1,17 +1,12 @@
-var AudioContext = window.AudioContext || window.webkitAudioContext;
-var audioContext = null;
-var scriptProcessor = null;
-const C2 = 65.41; // C2 note, in Hz.
+const C2 = 65.41;
 const notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const octaves = ["2", "3", "4", "5", "6", "7"];
 var testFrequencies = [];
-var ios = false;
 for (var i = 0; i < 72; i++) {
-  // Fill up the mapping between frequencies and notes
-  var noteFrequency = C2 * Math.pow(2, i / 12);
-  var noteName = notes[i % 12] + octaves[Math.floor(i / 12)];
-  var note = { frequency: noteFrequency, name: noteName };
-  testFrequencies = testFrequencies.concat([note]);
+    var noteFrequency = C2 * Math.pow(2, i / 12);
+    var noteName = notes[i % 12] + octaves[Math.floor(i / 12)];
+    var note = { frequency: noteFrequency, name: noteName };
+    testFrequencies = testFrequencies.concat([note]);
 }
 const noteMap = [
   "214E2UL",
@@ -43,8 +38,6 @@ const noteMap = [
 ];
 // The above encodes note info like so: first 3 digits represent y coord, letter represents note name
 // next digit represents octave, U or D shows whether stem goes up or down, L is added at the end if a ledger line is needed
-var maxWhitenoise = 0;
-var whitenoiseMeasurements = 0;
 var currentNote = "";
 var currentNotePosition = 175;
 var notesPlayed = 0;
@@ -52,103 +45,52 @@ var staffNotes = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
 var desiredNotes = [];
 var minNote = 0;
 var maxNote = 26;
-var barEnabled = true; // bar in the code refers to the bar moving across the screen dictating when to play notes
+var barEnabled = true;
 var barPosition = 135;
 var barDuration = 30000;
+let ws;
 
 $(window).on("load", function() {
-  var getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(useAudioStream).catch(function() {
-      $("#loading").text("Error: No Microphone");
-	});
-  else getUserMedia.call(navigator, { audio: true }, useAudioStream, function() {
-      $("#loading").text("Error: No Microphone");
-    });
+  connectWebSocket();
   if ($("#barcheckbox").prop("checked")) {
-    $("[id^='bpm']").fadeOut(0);
+      $("[id^='bpm']").fadeOut(0);
   }
-  updateNoteRange(); // Because autocomplete exists
+  updateNoteRange();
 });
 
-function useAudioStream(stream) {
-  audioContext = new AudioContext(); // These four lines set up microphone
-  var microphone = audioContext.createMediaStreamSource(stream);
-  scriptProcessor = audioContext.createScriptProcessor(1024, 1, 1); // In global namespace so Safari doesn't garbage-collect it
-  scriptProcessor.connect(audioContext.destination);
-  microphone.connect(scriptProcessor);
-  var buffer = [];
-  var sampleLengthMilliseconds = 50;
-  var recording = true;
-  scriptProcessor.onaudioprocess = function(event) {
-    if (!recording) return;
-    buffer = buffer.concat(Array.prototype.slice.call(event.inputBuffer.getChannelData(0)));
-    if (buffer.length > sampleLengthMilliseconds * audioContext.sampleRate / 1000) {
-      // Stop recording after sampleLengthMilliseconds
-      recording = false;
-      interpretAudioStream(buffer, audioContext.sampleRate);
-      buffer = [];
-      setTimeout(function() {
-        recording = true;
-      }, 250);
-    }
+function connectWebSocket() {
+  ws = new WebSocket('ws://192.168.0.132:81'); // Replace with your ESP32's IP
+
+  ws.onopen = function() {
+      $("#loading").text("Connected to ESP32");
   };
+
+  ws.onmessage = function(event) {
+      const receivedNote = event.data; // Get the note from the ESP32
+      console.log("Received note from ESP32:", receivedNote);
+      interpretNote(receivedNote); // Process the received note
+  };
+
+  ws.onclose = function() {
+      $("#loading").text("Disconnected, retrying...");
+      setTimeout(connectWebSocket, 3000);
+  };
+
+  ws.onerror = function(error) {
+      $("#loading").text("WebSocket error: " + error.message);
+  }
 }
 
-$("#resume").on("click", function() {
-  audioContext.resume(); // audioContext starts paused on iOS
-  ios = true; // In case I need to design around iOS in the future
-});
+/* 
+  TODO: implement multi-note receives 
+*/
+function interpretNote(receivedNote) {
+  // Trim whitespace from receivedNote
+  const trimmedNote = receivedNote.trim();
 
-function interpretAudioStream(timeseries, sampleRate) {
-  var scaleFactor = 2 * Math.PI / sampleRate; // 2pi * frequency gives the appropriate period to (co)sine
-  var frequencyAmplitudes = testFrequencies.map(function(f) {
-    var frequency = f.frequency;
-    var accumulator = [0, 0]; // Represent a complex number as a length-2 array [ real, imaginary ]
-    for (var t = 0; t < timeseries.length; t++) {
-      accumulator[0] += timeseries[t] * Math.cos(scaleFactor * frequency * t); // timeseries index / sampleRate gives the appropriate time coordinate
-      accumulator[1] += timeseries[t] * Math.sin(scaleFactor * frequency * t);
-    }
-    return accumulator;
-  });
-  var magnitudes = frequencyAmplitudes.map(function(z) {
-    return z[0] * z[0] + z[1] * z[1]; // Compute the (squared) magnitudes of the complex amplitudes for each test frequency
-  });
-  var maximumIndex = -1;
-  var maximumMagnitude = 0;
-  for (var i = 0; i < magnitudes.length; i++) {
-    // Find the maximum in the list of magnitudes
-    if (magnitudes[i] <= maximumMagnitude) continue;
-    maximumIndex = i;
-    maximumMagnitude = magnitudes[i];
-  }
-  if (whitenoiseMeasurements < 5) {
-    // The white noise measurements make sure that white noise doesn't register as a note
-    $("#loading").text("Calibrating microphone:" + (whitenoiseMeasurements + 1) * 100 / 5 + "%");
-    whitenoiseMeasurements++;
-    if (maxWhitenoise < maximumMagnitude) {
-      maxWhitenoise = maximumMagnitude;
-    }
-  }
-  if (whitenoiseMeasurements === 5) {
-    // Once enough data on whitenoise is gathered, generate sheet music and start listening
-    $("#loading").text("");
-    whitenoiseMeasurements++;
-  }
-  var average =
-    magnitudes.reduce(function(a, b) {
-      return a + b;
-    }, 0) / magnitudes.length;
-  var confidence = maximumMagnitude / average;
-  var confidenceThreshold = 15; // empirical, arbitrary
-  if (confidence > confidenceThreshold && maximumMagnitude > maxWhitenoise * 3) {
-    var dominantFrequency = testFrequencies[maximumIndex];
-    var a = testFrequencies[maximumIndex + 12] || dominantFrequency; // The algorithm can be off by 1 octave, so need these as workarounds
-    var b = testFrequencies[maximumIndex - 12] || dominantFrequency; // The array indexes specified might not exist, or statement catches that
-    console.log("expected" + currentNote + "actual" + dominantFrequency.name);
-    if (currentNote === "" || [dominantFrequency.name, a.name, b.name].indexOf(currentNote) > -1) {
+  console.log("expected", currentNote, "actual", trimmedNote);
+  if (currentNote === "" || trimmedNote === currentNote) {
       continuePractice(true);
-    }
   }
 }
 
