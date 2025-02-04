@@ -1,13 +1,7 @@
 const C2 = 65.41;
 const notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const octaves = ["2", "3", "4", "5", "6", "7"];
-var testFrequencies = [];
-for (var i = 0; i < 72; i++) {
-    var noteFrequency = C2 * Math.pow(2, i / 12);
-    var noteName = notes[i % 12] + octaves[Math.floor(i / 12)];
-    var note = { frequency: noteFrequency, name: noteName };
-    testFrequencies = testFrequencies.concat([note]);
-}
+
 const noteMap = [
   "214E2UL",
   "206F2U",
@@ -82,7 +76,8 @@ function connectWebSocket() {
 }
 
 /* 
-  TODO: implement multi-note receives 
+  TODO: implement multi-note receives.
+  Data from webserver comes in delimited by commas.
 */
 function interpretNote(receivedNote) {
   // Trim whitespace from receivedNote
